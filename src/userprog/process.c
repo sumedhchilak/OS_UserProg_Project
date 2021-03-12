@@ -226,7 +226,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
   char *save_ptr;
   int index = 0;
 
-  char * argv[512];
+  char * argv[];
   for(token = strtok_r(file_name, " \n\t", &save_ptr); token != NULL; token = strtok_r(NULL, " \n\t", &save_ptr)) {
     *(argv + index) = token;
     index++;
