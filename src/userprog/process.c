@@ -19,7 +19,7 @@
 #include "threads/vaddr.h"
 
 static thread_func start_process NO_RETURN;
-static bool load (const char *cmdline, char *fn_copy, void (**eip) (void), void **esp);
+static bool load (const char *cmdline, void (**eip) (void), void **esp);
 //static void tokenize(char * args, char * program_name);
 static bool stack_helper(void **esp, char **argv, int argc);
 static bool check_overflow(char *my_esp, char **argv, int argc);
@@ -41,6 +41,8 @@ process_execute (const char *file_name)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
  
+  char *save_ptr;
+  char *token = strtok_r (fn_copy, fn_copy, PGSIZE);
 
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
@@ -48,39 +50,6 @@ process_execute (const char *file_name)
     palloc_free_page (fn_copy); 
   return tid;
 }
-
-// static void tokenize(char *args, char *program_name){
-//   int index = 0;
-//   int count = 0;
-//   bool previous_is_space = true;
-//   char space = ' ';
-//   while(args[index] != '\0'){
-//     if(args[index] == space){
-//       if(!previous_is_space){
-//         count++;
-//       }
-//       previous_is_space = true;
-//     } else{
-//       previous_is_space = false;
-//     }
-//     index++;
-//   }
-//   if(!previous_is_space){
-//     count++;
-//   }
-//   if(count > MAX_SIZE){
-//     return NULL;
-//   }
-//   const char delim [2] = {' ', '\0'};
-//   char *ptr;
-//   char *argument = strtok_r(args, delim, &ptr);
-//   int i = 0;
-//   for(; i < count; i++){
-//     program_name[i] = argument;
-//     argument = strtok_r(NULL, delim, &ptr);
-//   }
-//   program_name[count] = '\0';
-// }
 
 /* A thread function that loads a user process and starts it
    running. */
@@ -96,7 +65,7 @@ start_process (void *file_name_)
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  success = load (file_name, file_name, &if_.eip, &if_.esp);
+  success = load (file_name, &if_.eip, &if_.esp);
   /* If load failed, quit. */
   palloc_free_page (file_name);
   if (!success) 
@@ -125,6 +94,7 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
+  printf("%s", "hello");
   while(1);
   return -1;
 }
@@ -244,7 +214,7 @@ static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
    and its initial stack pointer into *ESP.
    Returns true if successful, false otherwise. */
 bool
-load (const char *file_name, char *fn_copy, void (**eip) (void), void **esp) 
+load (const char *file_name, void (**eip) (void), void **esp) 
 {
   struct thread *t = thread_current ();
   struct Elf32_Ehdr ehdr;
@@ -257,7 +227,7 @@ load (const char *file_name, char *fn_copy, void (**eip) (void), void **esp)
   char *save_ptr;
   int index = 0;
   char * argv[128];
-  for(token = strtok_r(file_name, " \n\t", &save_ptr); token != NULL; token = strtok_r(NULL, " \n\t", &save_ptr)){
+  for(token = strtok_r(file_name, " \n\t", &save_ptr); token != NULL; token = strtok_r(NULL, " \n\t", &save_ptr)) {
     *(argv + index) = token;
     index++;
   }
@@ -349,10 +319,10 @@ load (const char *file_name, char *fn_copy, void (**eip) (void), void **esp)
         }
     }
 
-  palloc_free_page(fn_copy);
+  //palloc_free_page(fn_copy);
 
   /* Set up stack. */
-  if (!setup_stack (esp, &argv, index));
+  if (!setup_stack (esp, &argv, 128));
     goto done;
 
   /* Start address. */
@@ -475,21 +445,26 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 }
 
 static bool
-check_overflow(char *my_esp, char **argv, int argc){
+check_overflow(char *my_esp, char **argv, int argc) {
   int i;
   for(i = argc - 1; i >= 0; i--){
-    int arg_length = strlen(argv[i]) + 1;
-    my_esp -= arg_length;
+    if(argv[i] != NULL){
+      int arg_length = strlen(argv[i]) + 1;
+      my_esp -= arg_length;
+    }
   }
   int remainder = ((unsigned) my_esp) % 4;
   my_esp -= remainder;
+
   my_esp -= (argc + 2)*(sizeof (char *));
+
   int *int_esp = (int *) my_esp;
   int_esp--;
   my_esp = (char *) int_esp;
   my_esp -= sizeof(void *);
-  unsigned byte_diff = (unsigned) PHYS_BASE - 12;
+  unsigned byte_diff = (unsigned) PHYS_BASE - (unsigned) my_esp;
   if(byte_diff >= PGSIZE){
+    printf("%s", "early exit\n");
     return false;
   }
   return true;
@@ -500,38 +475,47 @@ static bool
 stack_helper(void **esp, char **argv, int argc){
   *esp = PHYS_BASE;
   char *my_esp = (char *) *esp;
+  //printf("%s", "javi\n");
   if(!check_overflow (my_esp, argv, argc)){
+    printf("%s", "overflow\n");
     return false;
   }
   char *addr_arr[argc];
   int i;
   for(i = argc - 1; i >= 0; i--){
-    int arg_length = strlen(argv[i]) + 1;
-    my_esp -= arg_length;
-    strlcpy(my_esp, argv[i], arg_length);
-    addr_arr[i] = my_esp;
+    if(argv[i] != NULL){
+      int arg_length = strlen(argv[i]) + 1;
+      my_esp -= arg_length;
+      strlcpy(my_esp, argv[i], arg_length);
+      addr_arr[i] = my_esp;
+    }
   }
+  printf("%s", "javiISNULL\n");
   int remainder = ((unsigned) my_esp) % 4;
   my_esp -= remainder;
   if(remainder){
     memset(my_esp, 0, remainder);
   }
+
   my_esp -= sizeof(char *);
   memset(my_esp, 0, sizeof(char *));
   for(i = argc - 1; i >= 0; i--){
     my_esp -= sizeof(addr_arr[i]);
     memcpy(my_esp, &addr_arr[i], sizeof(addr_arr[i]));
   }
-  my_esp -= sizeof(char *);
+  my_esp -= sizeof(char *); 
   char *ptr = my_esp + sizeof (char *);
   memcpy(my_esp, &ptr, sizeof(char *));
+
   int *int_esp = (int *) my_esp;
   int_esp--;
   *int_esp = argc;
+
   my_esp = (char *) int_esp;
   my_esp -= sizeof (void *);
   memset(my_esp, 0, sizeof (void *));
   *esp = my_esp;
+  hex_dump (*esp, *esp, PHYS_BASE - *esp, 1);
   return true;
 }
 
@@ -546,14 +530,16 @@ setup_stack (void **esp, char **argv, int argc)
   kpage = palloc_get_page (PAL_USER | PAL_ZERO);
   if (kpage != NULL) 
     {
+      printf("%s", "not null\n");
       success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
-      if (success && stack_helper(esp, argv, argc))
+      if (success) {
+        printf("%s", "success");
         *esp = PHYS_BASE;
+        stack_helper(esp, argv, argc);
+      }
       else
         palloc_free_page (kpage);
     }
-  //code from Piazza post @717
-  hex_dump (*esp, *esp, PHYS_BASE - *esp, 1);
   return success;
 }
 
