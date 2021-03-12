@@ -41,8 +41,8 @@ process_execute (const char *file_name)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
  
-  char *save_ptr;
-  char *token = strtok_r (fn_copy, fn_copy, PGSIZE);
+  // char *save_ptr;
+  // char *token = strtok_r (fn_copy, fn_copy, PGSIZE);
 
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
@@ -94,7 +94,6 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
-  printf("%s", "hello");
   while(1);
   return -1;
 }
@@ -226,7 +225,8 @@ load (const char *file_name, void (**eip) (void), void **esp)
   char *token;
   char *save_ptr;
   int index = 0;
-  char * argv[128];
+
+  char * argv[512];
   for(token = strtok_r(file_name, " \n\t", &save_ptr); token != NULL; token = strtok_r(NULL, " \n\t", &save_ptr)) {
     *(argv + index) = token;
     index++;
@@ -319,10 +319,8 @@ load (const char *file_name, void (**eip) (void), void **esp)
         }
     }
 
-  //palloc_free_page(fn_copy);
-
   /* Set up stack. */
-  if (!setup_stack (esp, &argv, 128));
+  if (!setup_stack (esp, &argv, index));
     goto done;
 
   /* Start address. */
@@ -424,7 +422,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       /* Load this page. */
       if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes)
         {
-          palloc_free_page (kpage);
+          palloc_free_page(kpage);
           return false; 
         }
       memset (kpage + page_read_bytes, 0, page_zero_bytes);
@@ -475,9 +473,7 @@ static bool
 stack_helper(void **esp, char **argv, int argc){
   *esp = PHYS_BASE;
   char *my_esp = (char *) *esp;
-  //printf("%s", "javi\n");
   if(!check_overflow (my_esp, argv, argc)){
-    printf("%s", "overflow\n");
     return false;
   }
   char *addr_arr[argc];
@@ -490,7 +486,6 @@ stack_helper(void **esp, char **argv, int argc){
       addr_arr[i] = my_esp;
     }
   }
-  printf("%s", "javiISNULL\n");
   int remainder = ((unsigned) my_esp) % 4;
   my_esp -= remainder;
   if(remainder){
@@ -530,10 +525,8 @@ setup_stack (void **esp, char **argv, int argc)
   kpage = palloc_get_page (PAL_USER | PAL_ZERO);
   if (kpage != NULL) 
     {
-      printf("%s", "not null\n");
       success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
       if (success) {
-        printf("%s", "success");
         *esp = PHYS_BASE;
         stack_helper(esp, argv, argc);
       }
