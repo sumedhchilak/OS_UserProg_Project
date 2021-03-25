@@ -34,7 +34,10 @@ static int sys_write (int fd, const void *buffer, unsigned size);
 static void sys_seek (int fd, unsigned position);
 static unsigned sys_tell (int fd);
 static void sys_close (int fd);
+static struct file* find_file(int fd);
+static void remove_file (struct list_elem * target);
 
+#define MAX_OPEN 128
 
 void
 syscall_init (void) 
@@ -43,12 +46,13 @@ syscall_init (void)
 }
 
 void
-verify_user(void *p){
+verify_address(void *p){
   if(p == NULL){
     sys_exit(-1);
   }
   else if (!(is_user_vaddr(p)) || !(is_user_vaddr(p + 1)) || 
-    !(is_user_vaddr(p + 2)) || !(is_user_vaddr(p + 3)) || !(is_user_vaddr(p + 4))) {
+    !(is_user_vaddr(p + 2)) || !(is_user_vaddr(p + 3)) || 
+    !(is_user_vaddr(p + 4))) {
     sys_exit(-1);
   }
   else if((pagedir_get_page(thread_current()->pagedir, p) == NULL)) {
@@ -62,7 +66,7 @@ syscall_handler (struct intr_frame *f UNUSED)
 {
   int32_t *p = (int32_t*)f->esp;
   int status = *p;
-  verify_user((void *)p);
+  verify_address((void *)p);
 
     switch(status){
 
@@ -178,14 +182,13 @@ sys_halt (void) {
 
 static void
 sys_exit (int status) {
-  // struct status_child *child;
   thread_current()->exit_status = status;
   thread_exit();
 }
 
 static pid_t
 sys_exec (const char *cmd_line) {
-  return process_execute(cmd_line);
+  return (pid_t) process_execute(cmd_line);
 }  
 
 static int
@@ -205,43 +208,124 @@ sys_remove (const char* file) {
 
 static int
 sys_open (const char* file) {
-  // struct file* new_file = filesys_open(file);
-  // struct thread* curr_thread = thread_current();
-  // if(new_file == NULL){
-  //   return -1;
-  // }
-  // else{
-
-  // }
-  return -1;
+  struct file* new_file = filesys_open(file);
+  if(new_file == NULL){
+    return -1;
+  }
+  else{
+    struct thread* curr_thread = thread_current();
+    if(curr_thread == NULL){
+      return -1;
+    }
+    list_push_back(&curr_thread->open_file_list, &new_file->open_elem);
+    return new_file->fd;
+  }
 }
 
 static int
 sys_filesize (int fd) {
-  return 0;
+  struct file* file = find_file(fd);
+  if(file == NULL){
+    return -1;
+  }
+  return file_length(file);
 }
 
 static int
 sys_read (int fd, void *buffer, unsigned size) {
-  return 0;
+  if(fd == STDIN_FILENO){
+    char* buffer_copy = (char *) buffer;
+    unsigned i;
+    for(i = 0; i < size; i++){
+      buffer_copy[i] = input_getc();
+    }
+    return size;
+  }
+  else if(fd == STDOUT_FILENO){
+    return -1;
+  }
+  else{
+    struct file* file = find_file(fd);
+    if(file == NULL){
+      return -1;
+    }
+    return file_read(file, (char*) buffer, size);
+  }
 }
 
 static int
 sys_write (int fd, const void *buffer, unsigned size) {
-  return 0;
+  if(fd == STDOUT_FILENO){
+    putbuf(buffer, size);
+    return size;
+  }
+  else if(fd == STDIN_FILENO){
+    return -1;
+  }
+  else{
+    struct file *file = find_file(fd);
+    if(file == NULL){
+      return -1;
+    }
+    return file_write(file, buffer, size);
+  }
 }
 
 static void 
 sys_seek (int fd, unsigned position) {
-  
+  struct file *file = find_file(fd);
+  if(file != NULL){
+    file_seek(file, position);
+  }
+  return;
 }
 
 static unsigned
 sys_tell (int fd) {
-  return 0;
+  struct file *file = find_file(fd);
+  if(file == NULL){
+    return -1;
+  }
+  return file_tell(file);
 }
 
 static void
 sys_close (int fd) {
-  
+  struct file *file = find_file(fd);
+  if(file != NULL){
+    file_close(file);
+    struct list_elem* target;
+    target = &file->open_elem;
+    // remove_file(target);
+    list_remove(target);
+  }
 }
+
+static struct file*
+find_file(int fd) {
+  struct thread *curr_thread = thread_current();
+  struct list_elem *element;
+  for(element = list_begin(&curr_thread->open_file_list);
+    element != list_end(&curr_thread->open_file_list); element = list_next(element)){
+      struct file * file_elem = list_entry(element, struct file, open_elem);
+      if(file_elem->fd == fd){
+        return file_elem;
+      }
+    }
+    return NULL;
+}
+
+// static void
+// remove_file(struct list_elem * target){
+//   struct file * target_file = list_entry(target, struct file, open_file_elem);
+//   struct thread *curr_thread = thread_current();
+//   struct list_elem *element;
+//   for(element = list_begin(&curr_thread->open_file_list);
+//     element != list_end(&curr_thread->open_file_list); element = list_next(element)){
+//       struct file * file_elem = list_entry(element, struct file, open_file_elem);
+//       if(file_elem->fd == target_file->fd){
+//         list_remove(target)
+//       }
+//     }
+//     return;
+// }

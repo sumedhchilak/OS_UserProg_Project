@@ -24,13 +24,6 @@ typedef int tid_t;
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
 
-struct status_child{
-   tid_t child_id;
-   int exit_status;
-   struct list_elem child_elem;
-   bool waited;
-};
-
 /* A kernel thread or user process.
 
    Each thread structure is stored in its own 4 kB page.  The
@@ -105,11 +98,15 @@ struct thread
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
+    int exit_status;
+    struct list open_file_list;
+
+
+
 #endif
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
-    int exit_status;
   };
 
 /* If false (default), use round-robin scheduler.
