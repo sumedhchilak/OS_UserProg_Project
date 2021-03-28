@@ -18,7 +18,7 @@
 
 static void syscall_handler (struct intr_frame *);
 /* check validity of memory address*/
-static void verify_user(void *p);
+static bool valid(void *p);
 
 /* Sys Calls */
 static void sys_halt (void);
@@ -43,31 +43,37 @@ void
 syscall_init (void) 
 {
   intr_register_int (0x30, 3, INTR_ON, syscall_handler, "syscall");
+  lock_init(&lock_file);
 }
 
-void
-verify_address(void *p){
-  if(p == NULL){
-    sys_exit(-1);
-  }
-  else if (!(is_user_vaddr(p)) || !(is_user_vaddr(p + 1)) || 
-    !(is_user_vaddr(p + 2)) || !(is_user_vaddr(p + 3)) || 
-    !(is_user_vaddr(p + 4))) {
-    sys_exit(-1);
-  }
-  else if((pagedir_get_page(thread_current()->pagedir, p) == NULL)) {
-    sys_exit(-1);
-  }   
+bool
+valid(void *p){
+  // if(p == NULL){
+  //   return 0;
+  // }
+  // else if (!(is_user_vaddr(p)) || !(is_user_vaddr(p + 1)) || 
+  //   !(is_user_vaddr(p + 2)) || !(is_user_vaddr(p + 3)) || 
+  //   !(is_user_vaddr(p + 4))) {
+  //   sys_exit(-1);
+  // }
+  // else if((pagedir_get_page(thread_current()->pagedir, p) == NULL)) {
+  //   sys_exit(-1);
+  // } 
+  return (p != NULL && is_user_vaddr(p) && pagedir_get_page(thread_current()->pagedir, p) != NULL);
 }
 
 
 static void
 syscall_handler (struct intr_frame *f UNUSED) 
 {
-  int32_t *p = (int32_t*)f->esp;
+  // printf ("system call!\n");
+  // thread_exit ();
+  printf("%s", "HELLO");
+  uint32_t *p = (uint32_t) f->esp;
+  if(!valid(p) || !valid(p + 1) || !valid(p + 2) || !valid(p + 3)){
+    sys_exit(-1);
+  }
   int status = *p;
-  verify_address((void *)p);
-
     switch(status){
 
       case SYS_HALT:
@@ -84,7 +90,7 @@ syscall_handler (struct intr_frame *f UNUSED)
       }
 
       case SYS_EXEC:
-      {
+      { 
         const char* cmd_line = p[1];
         f->eax = sys_exec(cmd_line);
         break;
@@ -169,7 +175,7 @@ syscall_handler (struct intr_frame *f UNUSED)
       default:
       {
         printf ("system call!\n");
-        thread_exit ();
+        sys_exit(-1);
         break;
       }
     }
@@ -182,7 +188,8 @@ sys_halt (void) {
 
 static void
 sys_exit (int status) {
-  thread_current()->exit_status = status;
+  struct process_info *p = thread_current()->process;
+  p->exit_status = status;
   thread_exit();
 }
 
@@ -198,17 +205,25 @@ sys_wait (pid_t pid) {
 
 static bool
 sys_create (const char* file, unsigned initial_size) {
-  return filesys_create(file, initial_size);
+  lock_acquire(&lock_file);
+  bool val = filesys_create(file, initial_size);
+  lock_release(&lock_file);
+  return val;
 }
 
 static bool
 sys_remove (const char* file) {
-  return filesys_remove(file);
+  lock_acquire(&lock_file);
+  bool val = filesys_remove(file);
+  lock_release(&lock_file);
+  return val;
 }
 
 static int
 sys_open (const char* file) {
+  lock_acquire(&lock_file);
   struct file* new_file = filesys_open(file);
+  lock_release(&lock_file);
   if(new_file == NULL){
     return -1;
   }
@@ -228,7 +243,10 @@ sys_filesize (int fd) {
   if(file == NULL){
     return -1;
   }
-  return file_length(file);
+  lock_acquire(&lock_file);
+  int val = file_length(file);
+  lock_release(&lock_file);
+  return val;
 }
 
 static int
@@ -249,7 +267,10 @@ sys_read (int fd, void *buffer, unsigned size) {
     if(file == NULL){
       return -1;
     }
-    return file_read(file, (char*) buffer, size);
+    lock_acquire(&lock_file);
+    int val = file_read(file, (char*) buffer, size);
+    lock_release(&lock_file);
+    return val;
   }
 }
 
@@ -267,7 +288,10 @@ sys_write (int fd, const void *buffer, unsigned size) {
     if(file == NULL){
       return -1;
     }
-    return file_write(file, buffer, size);
+    lock_acquire(&lock_file);
+    int val = file_write(file, buffer, size);
+    lock_release(&lock_file);
+    return val;
   }
 }
 
@@ -275,7 +299,9 @@ static void
 sys_seek (int fd, unsigned position) {
   struct file *file = find_file(fd);
   if(file != NULL){
+    lock_acquire(&lock_file);
     file_seek(file, position);
+    lock_release(&lock_file);
   }
   return;
 }
@@ -286,7 +312,10 @@ sys_tell (int fd) {
   if(file == NULL){
     return -1;
   }
-  return file_tell(file);
+  lock_acquire(&lock_file);
+  unsigned val = file_tell(file);
+  lock_release(&lock_file);
+  return val;
 }
 
 static void

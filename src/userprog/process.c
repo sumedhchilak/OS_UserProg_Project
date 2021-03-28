@@ -48,6 +48,7 @@ process_execute (const char *file_name)
   tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy); 
+ 
   return tid;
 }
 
@@ -92,11 +93,43 @@ start_process (void *file_name_)
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int
-process_wait (tid_t child_tid UNUSED) 
+process_wait (tid_t child_tid) 
 {
-  while(1);
-  return -1;
+  // while(1);
+  // return -1;
+  struct thread* curr_thread = thread_current();
+  struct process_info *child = get_child(child_tid, curr_thread);
+  int c_status = -1;
+  if(child == NULL || child->prev_wait){
+    return -1;
+  }
+  child->prev_wait = true;
+  if(child == NULL){
+    return c_status;
+  }
+  sema_down(&child->sema_wait);
+  c_status = child->exit_status;
+  list_remove(&child->child_elem);
+  palloc_free_page(child);
+  return c_status;
 }
+
+struct process_info*
+get_child(tid_t child_tid, struct thread *t){
+  struct list_elem *element;
+  struct process_info *child;
+  for(element = list_begin(&t->list_child);
+    element != list_end(&t->list_child);
+      element = list_next(element))
+    {
+        child = list_entry(element, struct process_info, child_elem);
+        if(child->tid == child_tid){
+          return child;
+        }
+    }
+    return NULL;
+}
+
 
 /* Free the current process's resources. */
 void
@@ -105,6 +138,9 @@ process_exit (void)
   struct thread *cur = thread_current ();
   uint32_t *pd;
 
+  if(!list_empty(&cur->process->sema_wait.waiters)){
+    sema_up(&cur->process->sema_wait);
+  }
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
   pd = cur->pagedir;
