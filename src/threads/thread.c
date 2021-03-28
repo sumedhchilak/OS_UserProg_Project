@@ -184,6 +184,7 @@ thread_create (const char *name, int priority,
     return TID_ERROR;
   }
   sema_init(&child->sema_wait, 0);
+  sema_init(&child->sema_load, 0);
   child->prev_wait = false;
 
   /* Initialize thread. */

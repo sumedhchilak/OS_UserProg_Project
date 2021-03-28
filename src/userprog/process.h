@@ -12,6 +12,7 @@ struct process_info{
     bool exit;
     struct list_elem child_elem;
     struct semaphore sema_wait;
+    struct semaphore sema_load;
 };
 
 tid_t process_execute (const char *file_name);

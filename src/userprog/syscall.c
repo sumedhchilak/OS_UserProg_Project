@@ -68,7 +68,7 @@ syscall_handler (struct intr_frame *f UNUSED)
 {
   // printf ("system call!\n");
   // thread_exit ();
-  printf("%s", "HELLO");
+  printf("HELLO");
   uint32_t *p = (uint32_t) f->esp;
   if(!valid(p) || !valid(p + 1) || !valid(p + 2) || !valid(p + 3)){
     sys_exit(-1);
@@ -289,7 +289,7 @@ sys_write (int fd, const void *buffer, unsigned size) {
       return -1;
     }
     lock_acquire(&lock_file);
-    int val = file_write(file, buffer, size);
+    int val = file_write(file->fd, buffer, size);
     lock_release(&lock_file);
     return val;
   }

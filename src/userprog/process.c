@@ -46,9 +46,10 @@ process_execute (const char *file_name)
 
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
-  if (tid == TID_ERROR)
-    palloc_free_page (fn_copy); 
- 
+  if (tid == TID_ERROR){
+    palloc_free_page (fn_copy);
+    return tid;
+  } 
   return tid;
 }
 
@@ -546,7 +547,7 @@ stack_helper(void **esp, char **argv, int argc){
   my_esp -= sizeof (void *);
   memset(my_esp, 0, sizeof (void *));
   *esp = my_esp;
-  hex_dump (*esp, *esp, PHYS_BASE - *esp, 1);
+  // hex_dump (*esp, *esp, PHYS_BASE - *esp, 1);
   return true;
 }
 
