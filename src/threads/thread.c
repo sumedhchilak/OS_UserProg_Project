@@ -93,6 +93,8 @@ thread_init (void)
   list_init (&ready_list);
   list_init (&all_list);
 
+  sema_init(&sema_file, 1);
+
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
   init_thread (initial_thread, "main", PRI_DEFAULT);
@@ -179,18 +181,9 @@ thread_create (const char *name, int priority,
   if (t == NULL)
     return TID_ERROR;
 
-  struct process_info *child = palloc_get_page(0);
-  if(child == NULL){
-    return TID_ERROR;
-  }
-  sema_init(&child->sema_wait, 0);
-  sema_init(&child->sema_load, 0);
-  child->prev_wait = false;
-
   /* Initialize thread. */
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
-
 
   /* Stack frame for kernel_thread(). */
   kf = alloc_frame (t, sizeof *kf);
@@ -207,9 +200,9 @@ thread_create (const char *name, int priority,
   sf->eip = switch_entry;
   sf->ebp = 0;
 
-  t->process = child;
-  child->tid = tid;
-  list_push_back(&thread_current()->list_child, &child->child_elem);
+  // t->process = child;
+  // child->tid = tid;
+  // list_push_back(&thread_current()->list_child, &child->child_elem);
 
   /* Add to run queue. */
   thread_unblock (t);
@@ -479,7 +472,12 @@ init_thread (struct thread *t, const char *name, int priority)
   t->magic = THREAD_MAGIC;
 
   list_init(&t->list_child);
-  t->process = NULL;
+  list_push_back(&running_thread()->list_child, &t->child_elem);
+  
+  sema_init(&t->sema_wait, 0);
+  t->loaded = 0;
+  sema_init(&t->sema_load, 0);
+  sema_init(&t->sema_free, 0);
   
   old_level = intr_disable();
   list_push_back (&all_list, &t->allelem);

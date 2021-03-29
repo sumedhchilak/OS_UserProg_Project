@@ -4,6 +4,7 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+#include "threads/synch.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -23,6 +24,9 @@ typedef int tid_t;
 #define PRI_MIN 0                       /* Lowest priority. */
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
+
+
+struct semaphore sema_file;
 
 /* A kernel thread or user process.
 
@@ -91,18 +95,24 @@ struct thread
     char name[16];                      /* Name (for debugging purposes). */
     uint8_t *stack;                     /* Saved stack pointer. */
     int priority;                       /* Priority. */
-    struct list_elem allelem;           /* List element for all threads list. */
-
+    struct list_elem allelem;           /* List element for all threads list. */                       
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
+    struct list open_file_list;
+    struct list list_child;
+   //  struct process_info *process;
+    struct list_elem child_elem;
+    struct semaphore sema_wait;
+    int loaded;
+    struct semaphore sema_load;
+    int exit_status;
+    struct semaphore sema_free;
+    struct file *exec_file;
+    void** file_d[128];
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
-    struct list open_file_list;
-    struct list list_child;
-    struct process_info *process;
-
 #endif
 
     /* Owned by thread.c. */

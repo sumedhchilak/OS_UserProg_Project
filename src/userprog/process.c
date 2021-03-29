@@ -17,6 +17,7 @@
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "userprog/syscall.h"
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
@@ -33,23 +34,42 @@ process_execute (const char *file_name)
 {
   char *fn_copy;
   tid_t tid;
+  char *fn_other;
 
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
   fn_copy = palloc_get_page (0);
   if (fn_copy == NULL)
     return TID_ERROR;
+  fn_other = palloc_get_page (0);
+  if(fn_other == NULL)
+    palloc_free_page(fn_copy);
+    return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
- 
+  strlcpy (fn_other, file_name, PGSIZE);
+
+  char *ptr;
+
+  fn_other = strtok_r((char *)fn_other, " ", &ptr);
   // char *save_ptr;
   // char *token = strtok_r (fn_copy, fn_copy, PGSIZE);
 
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+  palloc_free_page (fn_other);
   if (tid == TID_ERROR){
     palloc_free_page (fn_copy);
     return tid;
-  } 
+  }
+  // struct process_info *child = get_child(tid, thread_current());
+  // if(child == NULL){
+  //   palloc_free_page (fn_copy);
+  //   palloc_free_page (fn_other);
+  //   return TID_ERROR;
+  // }
+  // palloc_free_page(fn_other);
+  // sema_down(&child->sema_load); 
+  // return child->tid;
   return tid;
 }
 
@@ -70,8 +90,16 @@ start_process (void *file_name_)
   success = load (file_name, &if_.eip, &if_.esp);
   /* If load failed, quit. */
   palloc_free_page (file_name);
-  if (!success) 
-    thread_exit ();
+  if (!success) { 
+    struct thread *curr = thread_current();
+    sema_up(&curr->sema_load);
+    sys_exit(-1);
+  }
+  else{
+    struct thread *curr = thread_current();
+    curr->loaded = 1;
+    sema_up(&curr->sema_load);
+  }
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -98,38 +126,36 @@ process_wait (tid_t child_tid)
 {
   // while(1);
   // return -1;
-  struct thread* curr_thread = thread_current();
-  struct process_info *child = get_child(child_tid, curr_thread);
-  int c_status = -1;
-  if(child == NULL || child->prev_wait){
-    return -1;
-  }
-  child->prev_wait = true;
-  if(child == NULL){
-    return c_status;
-  }
-  sema_down(&child->sema_wait);
-  c_status = child->exit_status;
-  list_remove(&child->child_elem);
-  palloc_free_page(child);
-  return c_status;
+  // struct thread* curr_thread = thread_current();
+  // struct process_info *child = get_child(child_tid, curr_thread);
+  // int c_status = -1;
+  // if(child == NULL || child->prev_wait){
+  //   return -1;
+  // }
+  // child->prev_wait = true;
+  // sema_down(&child->sema_wait);
+  // c_status = child->exit_status;
+  // list_remove(&child->child_elem);
+  // palloc_free_page(child);
+  // return c_status;
+  return sys_wait(child_tid);
 }
 
-struct process_info*
-get_child(tid_t child_tid, struct thread *t){
-  struct list_elem *element;
-  struct process_info *child;
-  for(element = list_begin(&t->list_child);
-    element != list_end(&t->list_child);
-      element = list_next(element))
-    {
-        child = list_entry(element, struct process_info, child_elem);
-        if(child->tid == child_tid){
-          return child;
-        }
-    }
-    return NULL;
-}
+// struct process_info*
+// get_child(tid_t child_tid, struct thread *t){
+//   struct list_elem *element;
+//   struct process_info *child;
+//   for(element = list_begin(&t->list_child);
+//     element != list_end(&t->list_child);
+//       element = list_next(element))
+//     {
+//         child = list_entry(element, struct process_info, child_elem);
+//         if(child->tid == child_tid){
+//           return child;
+//         }
+//     }
+//     return NULL;
+// }
 
 
 /* Free the current process's resources. */
@@ -139,9 +165,39 @@ process_exit (void)
   struct thread *cur = thread_current ();
   uint32_t *pd;
 
-  if(!list_empty(&cur->process->sema_wait.waiters)){
-    sema_up(&cur->process->sema_wait);
+  // if(!list_empty(&cur->process->sema_wait.waiters)){
+  //   sema_up(&cur->process->sema_wait);
+  // }
+
+/*
+
+  struct thread *curr_thread = thread_current();
+    struct list_elem *element;
+    for(element = list_begin(&curr_thread->open_file_list);
+      element != list_end(&curr_thread->open_file_list); element = list_next(element)){
+        struct file * file_elem = list_entry(element, struct file, open_elem);
+        if(file_elem->fd == fd){
+          return file_elem;
+        }
+      }
+      return NULL;
+*/
+
+  sema_down (&sema_file);
+  // struct list_elem *element;
+  // struct thread *curr_thread;
+  // for(element = list_begin(&curr_thread->open_file_list);
+  //     element != list_end(&curr_thread->open_file_list); element = list_next(element)){
+  //       struct file * file_elem = list_entry(element, struct file, open_elem);
+  //       file_close(file_elem->fd);
+  //     }
+  int i = 2;
+  for(; i < 128; i++){
+    if(cur->file_d[i]){
+      file_close(cur->file_d[i]);
+    }
   }
+  sema_up(&sema_file);
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
   pd = cur->pagedir;
@@ -276,10 +332,12 @@ load (const char *file_name, void (**eip) (void), void **esp)
     goto done;
   process_activate ();
 
+  sema_down(&sema_file);
   /* Open executable file. */
   file = filesys_open (file_name);
   if (file == NULL) 
     {
+      sema_up(&sema_file);
       printf ("load: %s: open failed\n", file_name);
       goto done; 
     }
@@ -293,6 +351,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
       || ehdr.e_phentsize != sizeof (struct Elf32_Phdr)
       || ehdr.e_phnum > 1024) 
     {
+      sema_up(&sema_file);
       printf ("load: %s: error loading executable\n", file_name);
       goto done; 
     }
@@ -303,12 +362,17 @@ load (const char *file_name, void (**eip) (void), void **esp)
     {
       struct Elf32_Phdr phdr;
 
-      if (file_ofs < 0 || file_ofs > file_length (file))
+      if (file_ofs < 0 || file_ofs > file_length (file)){
+        sema_up(&sema_file);
         goto done;
+      }
+
       file_seek (file, file_ofs);
 
-      if (file_read (file, &phdr, sizeof phdr) != sizeof phdr)
+      if (file_read (file, &phdr, sizeof phdr) != sizeof phdr){
+        sema_up(&sema_file);
         goto done;
+      }
       file_ofs += sizeof phdr;
       switch (phdr.p_type) 
         {
@@ -322,6 +386,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
         case PT_DYNAMIC:
         case PT_INTERP:
         case PT_SHLIB:
+          sema_up(&sema_file);
           goto done;
         case PT_LOAD:
           if (validate_segment (&phdr, file)) 
@@ -347,15 +412,19 @@ load (const char *file_name, void (**eip) (void), void **esp)
                   zero_bytes = ROUND_UP (page_offset + phdr.p_memsz, PGSIZE);
                 }
               if (!load_segment (file, file_page, (void *) mem_page,
-                                 read_bytes, zero_bytes, writable))
+                                 read_bytes, zero_bytes, writable)){
+                sema_up(&sema_file);                 
                 goto done;
+              }
             }
-          else
+          else{
+            sema_up(&sema_file);
             goto done;
+          }
           break;
         }
     }
-
+  sema_up(&sema_file);
   /* Set up stack. */
   if (!setup_stack (esp, &argv, index));
     goto done;

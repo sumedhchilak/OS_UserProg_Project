@@ -15,35 +15,20 @@
 #include "filesys/inode.h"
 #include <user/syscall.h>
 #include "devices/input.h"
+#include "threads/init.h"
+
 
 static void syscall_handler (struct intr_frame *);
 /* check validity of memory address*/
 static bool valid(void *p);
 
-/* Sys Calls */
-static void sys_halt (void);
-static void sys_exit (int status);
-static pid_t sys_exec (const char *cmd_line);
-static int sys_wait (pid_t pid);
-static bool sys_create (const char* file, unsigned initial_size);
-static bool sys_remove (const char* file);
-static int sys_open (const char* file);
-static int sys_filesize (int fd);
-static int sys_read (int fd, void *buffer, unsigned size);
-static int sys_write (int fd, const void *buffer, unsigned size);
-static void sys_seek (int fd, unsigned position);
-static unsigned sys_tell (int fd);
-static void sys_close (int fd);
-static struct file* find_file(int fd);
-static void remove_file (struct list_elem * target);
-
 #define MAX_OPEN 128
+
 
 void
 syscall_init (void) 
 {
   intr_register_int (0x30, 3, INTR_ON, syscall_handler, "syscall");
-  lock_init(&lock_file);
 }
 
 bool
@@ -66,14 +51,12 @@ valid(void *p){
 static void
 syscall_handler (struct intr_frame *f UNUSED) 
 {
-  // printf ("system call!\n");
-  // thread_exit ();
-  printf("HELLO");
-  uint32_t *p = (uint32_t) f->esp;
-  if(!valid(p) || !valid(p + 1) || !valid(p + 2) || !valid(p + 3)){
-    sys_exit(-1);
-  }
+  uint32_t *p = (uint32_t*)f->esp;
+  // if(!valid(p) || !valid(p + 1) || !valid(p + 2) || !valid(p + 3)){
+  //   sys_exit(-1);
+  // }
   int status = *p;
+  printf("%d", status);
     switch(status){
 
       case SYS_HALT:
@@ -181,156 +164,360 @@ syscall_handler (struct intr_frame *f UNUSED)
     }
   }
 
-static void
+void
 sys_halt (void) {
   shutdown_power_off();
 }
 
-static void
+void
 sys_exit (int status) {
-  struct process_info *p = thread_current()->process;
-  p->exit_status = status;
+  struct thread *curr = thread_current();
+  curr->exit_status = status;
+  printf("%s: exit(%d)\n", curr->name, status);
+  sema_up(&curr->sema_wait);
+  sema_up(&curr->sema_free);
+
+  struct list_elem *element;
+  for(element = list_begin(&curr->list_child);
+    element != list_end(&curr->list_child); element = list_next(element)){
+      struct thread *child = list_entry(element, struct thread, child_elem);
+      sema_up(&child->sema_free);
+    }
   thread_exit();
 }
 
-static pid_t
+struct thread*
+get_child(tid_t c_tid){
+  struct thread *curr = thread_current();
+  if(!list_empty (&curr->list_child)){
+    struct thread* recent_child = list_entry((*list_end(&curr->list_child)).prev,
+                                      struct thread, child_elem);
+    return recent_child;
+  }
+  return NULL;
+}
+
+pid_t
 sys_exec (const char *cmd_line) {
-  return (pid_t) process_execute(cmd_line);
+  tid_t c_tid = process_execute(cmd_line);
+  if(c_tid == TID_ERROR){
+    return -1;
+  }
+  struct thread* child = get_child(c_tid);
+  if(child == NULL){
+    return -1;
+  }
+  sema_down(&child->sema_load);
+  int loaded = child->loaded;
+  if(loaded == 0){
+    return -1;
+  }
+  return c_tid;
 }  
 
-static int
-sys_wait (pid_t pid) {
-  return process_wait(pid);
+struct thread*
+find_tid (pid_t pid, struct thread *curr){
+  struct list_elem *element;
+  for(element = list_begin(&curr->list_child);
+    element != list_end(&curr->list_child); element = list_next(element)){
+      struct thread *child = list_entry(element, struct thread, child_elem);
+      if(child->tid == pid){
+        return child;
+      }
+    }
+  return NULL;
 }
 
-static bool
-sys_create (const char* file, unsigned initial_size) {
-  lock_acquire(&lock_file);
-  bool val = filesys_create(file, initial_size);
-  lock_release(&lock_file);
-  return val;
-}
 
-static bool
-sys_remove (const char* file) {
-  lock_acquire(&lock_file);
-  bool val = filesys_remove(file);
-  lock_release(&lock_file);
-  return val;
-}
-
-static int
-sys_open (const char* file) {
-  lock_acquire(&lock_file);
-  struct file* new_file = filesys_open(file);
-  lock_release(&lock_file);
-  if(new_file == NULL){
+int
+sys_wait (int pid) {
+  struct thread *curr = thread_current();
+  if(list_empty(&curr->list_child)){
     return -1;
+  }
+  struct thread *child = find_tid(pid, curr);
+  if(child == NULL){
+    return -1;
+  }
+  sema_down(&child->sema_wait);
+  int exit_status = child->exit_status;
+  list_remove(&child->child_elem);
+  sema_up (&child->sema_free);
+  return exit_status;
+}
+
+ bool
+sys_create (const char* file, unsigned initial_size) {
+  sema_down(&sema_file);
+  bool val = filesys_create(file, initial_size);
+  sema_up(&sema_file);
+  return val;
+}
+
+bool
+sys_remove (const char* file) {
+  sema_down(&sema_file);
+  bool val = filesys_remove(file);
+  sema_up(&sema_file);
+  return val;
+}
+
+int
+sys_open (const char* file) {
+  // sema_down(&sema_file);
+  // struct file* new_file = filesys_open(file);
+  // if(new_file == NULL){
+  //   sema_up(&sema_file);
+  //   return -1;
+  // }
+  // else{
+  //   struct thread* curr_thread = thread_current();
+  //   if(curr_thread == NULL){
+  //     sema_up(&sema_file);
+  //     return -1;
+  //   }
+  //   list_push_back(&curr_thread->open_file_list, &new_file->open_elem);
+  //   sema_up(&sema_file);
+  //   return new_file->fd;
+  // }
+  sema_down(&sema_file);
+  struct thread *curr = thread_current();
+  int value = -1;
+  int i = 2;
+  for(; i < 128; i++){
+    if(curr->file_d[i] == NULL){
+      struct file *new_f = filesys_open(file);
+      if(new_f != NULL){
+        curr->file_d[i] = new_f;
+        value = i;
+      }
+      break;
+    }
+  }
+  sema_up(&sema_file);
+  return value;
+}
+
+int
+sys_filesize (int fd) {
+  // struct file* file = find_file(fd);
+  // if(file == NULL){
+  //   return -1;
+  // }
+  // sema_down(&sema_file);
+  // int val = file_length(file);
+  // sema_up(&sema_file);
+  // return val;
+  if(fd < 1 || fd >= 128){
+    return -1;
+  }
+  struct thread *curr = thread_current();
+  int size = -1;
+  struct file *file = curr->file_d[fd];
+  sema_down(&sema_file);
+  if(file == NULL){
+    size = -1;
   }
   else{
-    struct thread* curr_thread = thread_current();
-    if(curr_thread == NULL){
-      return -1;
-    }
-    list_push_back(&curr_thread->open_file_list, &new_file->open_elem);
-    return new_file->fd;
+    size = file_length(file);
   }
+  sema_up(&sema_file);
+  return size;
 }
 
-static int
-sys_filesize (int fd) {
-  struct file* file = find_file(fd);
-  if(file == NULL){
+int
+sys_read (int fd, void *buffer, unsigned size) {
+  // sema_down(&sema_file);
+  // int val = -1;
+  // if(fd == STDIN_FILENO){
+  //   char* buffer_copy = (char *) buffer;
+  //   unsigned i;
+  //   for(i = 0; i < size; i++){
+  //     buffer_copy[i] = input_getc();
+  //   }
+  //   val = size;
+  // }
+  // else if(fd == STDOUT_FILENO){
+  //   val = -1;
+  // }
+  // else{
+  //   struct file* file = find_file(fd);
+  //   if(file == NULL){
+  //     val = -1;
+  //   }
+  //   else{
+  //     int res = file_read(file, (char*) buffer, size);
+  //     val = res;
+  //   }
+  // }
+  // sema_up(&sema_file);
+  // return val;
+  if(fd < 1 || fd >= 128){
     return -1;
   }
-  lock_acquire(&lock_file);
-  int val = file_length(file);
-  lock_release(&lock_file);
-  return val;
-}
-
-static int
-sys_read (int fd, void *buffer, unsigned size) {
+  sema_down(&sema_file);
+  int val = -1;
   if(fd == STDIN_FILENO){
     char* buffer_copy = (char *) buffer;
     unsigned i;
     for(i = 0; i < size; i++){
       buffer_copy[i] = input_getc();
     }
-    return size;
+    val = size;
   }
   else if(fd == STDOUT_FILENO){
-    return -1;
+    val = -1;
   }
-  else{
-    struct file* file = find_file(fd);
+  else {
+    struct thread *curr = thread_current();
+    struct file* file = curr->file_d[fd];
     if(file == NULL){
-      return -1;
+      val = -1;
     }
-    lock_acquire(&lock_file);
-    int val = file_read(file, (char*) buffer, size);
-    lock_release(&lock_file);
-    return val;
+    else{
+      int res = file_read(file, (char*) buffer, size);
+      val = res;
+    }
   }
+  sema_up(&sema_file);
+  return val;
 }
 
-static int
+int
 sys_write (int fd, const void *buffer, unsigned size) {
-  if(fd == STDOUT_FILENO){
-    putbuf(buffer, size);
-    return size;
-  }
-  else if(fd == STDIN_FILENO){
+  // if(fd == STDOUT_FILENO){
+  //   sema_down(&sema_file);
+  //   putbuf(buffer, size);
+  //   sema_up(&sema_file);
+  //   return size;
+  // }
+  // else if(fd == STDIN_FILENO){
+  //   return -1;
+  // }
+  // else{
+  //   struct file *file = find_file(fd);
+  //   if(file == NULL){
+  //     return -1;
+  //   }
+  //   sema_down(&sema_file);
+  //   int val = file_write(file, buffer, size);
+  //   sema_up(&sema_file);
+  //   return val;
+  // }
+  // int retValue = -1;
+  // sema_down(&sema_file);
+  // if(fd == STDOUT_FILENO){
+  //   putbuf(buffer, size);
+  //   retValue = size;
+  // }
+  // else if(fd == STDIN_FILENO){
+  //   retValue = -1;
+  // }
+  // else{
+  //   struct file *file = find_file(fd);
+  //   if(file == NULL){
+  //     retValue = -1;
+  //   }
+  //   int val = file_write(file, buffer, size);
+  //   retValue = val;
+  // }
+  // sema_up(&sema_file);
+  // return retValue;
+  if(fd < 1 || fd >= 128){
     return -1;
   }
-  else{
-    struct file *file = find_file(fd);
-    if(file == NULL){
-      return -1;
-    }
-    lock_acquire(&lock_file);
-    int val = file_write(file->fd, buffer, size);
-    lock_release(&lock_file);
-    return val;
+  sema_down(&sema_file);
+  int written = 0;
+  if(fd == STDOUT_FILENO){
+    written = size;
+    putbuf((const char *) buffer, size);
   }
+  else{
+    struct thread *curr = thread_current();
+    struct file *file = curr->file_d[fd];
+    if(file == NULL){
+      written = 0;
+    }
+    else{
+      written = file_write(file, buffer, size);
+    }
+  }
+  sema_up(&sema_file);
+  return written;
 }
 
-static void 
+void 
 sys_seek (int fd, unsigned position) {
-  struct file *file = find_file(fd);
-  if(file != NULL){
-    lock_acquire(&lock_file);
-    file_seek(file, position);
-    lock_release(&lock_file);
+  // struct file *file = find_file(fd);
+  // if(file != NULL){
+  //   sema_down(&sema_file);
+  //   file_seek(file, position);
+  //   sema_up(&sema_file);
+  // }
+  // return;
+  if(fd > 1 && fd < 128){
+    sema_down(&sema_file);
+    struct thread * curr = thread_current();
+    struct file *file = curr->file_d[fd];
+    if(file != NULL){
+      file_seek(file, position);
+    }
+    sema_up(&sema_file);
   }
   return;
 }
 
-static unsigned
+unsigned
 sys_tell (int fd) {
-  struct file *file = find_file(fd);
-  if(file == NULL){
+  // struct file *file = find_file(fd);
+  // if(file == NULL){
+  //   return -1;
+  // }
+  // sema_down(&sema_file);
+  // unsigned val = file_tell(file);
+  // sema_up(&sema_file);
+  // return val;
+  if(fd < 1 || fd >= 128){
     return -1;
   }
-  lock_acquire(&lock_file);
-  unsigned val = file_tell(file);
-  lock_release(&lock_file);
-  return val;
+  unsigned value = -1;
+  sema_down(&sema_file);
+  struct thread *curr = thread_current();
+  struct file *file = curr->file_d[fd];
+  if(file != NULL){
+    value = file_tell(file);
+    sema_up(&sema_file);
+    return value;
+  }
+  sema_up(&sema_file);
+  sys_exit (-1);
+  return value;
 }
 
-static void
+void
 sys_close (int fd) {
-  struct file *file = find_file(fd);
+  // struct file *file = find_file(fd);
+  // if(file != NULL){
+  //   file_close(file);
+  //   struct list_elem* target;
+  //   target = &file->open_elem;
+  //   // remove_file(target);
+  //   list_remove(target);
+  // }
+  if(fd < 1 || fd >= 128){
+    return;
+  }
+  sema_down(&sema_file);
+  struct thread *curr = thread_current();
+  struct file * file = curr->file_d[fd];
   if(file != NULL){
     file_close(file);
-    struct list_elem* target;
-    target = &file->open_elem;
-    // remove_file(target);
-    list_remove(target);
+    curr->file_d[fd] = 0;
   }
+  sema_up(&sema_file);
 }
 
-static struct file*
+struct file*
 find_file(int fd) {
   struct thread *curr_thread = thread_current();
   struct list_elem *element;
@@ -344,7 +531,7 @@ find_file(int fd) {
     return NULL;
 }
 
-// static void
+// void
 // remove_file(struct list_elem * target){
 //   struct file * target_file = list_entry(target, struct file, open_file_elem);
 //   struct thread *curr_thread = thread_current();
