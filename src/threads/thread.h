@@ -109,6 +109,7 @@ struct thread
     struct semaphore sema_free;
     struct file *exec_file;
     void** file_d[128];
+    struct file* file_self;
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */

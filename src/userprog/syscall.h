@@ -10,7 +10,7 @@ void syscall_init (void);
 
 void sys_halt (void);
 void sys_exit (int status);
-struct thread* get_child(int c_tid);
+struct thread* get_child(int c_tid, struct thread *curr);
 int sys_exec (const char *cmd_line);
 struct thread* find_tid (int pid, struct thread *curr);
 int sys_wait (int pid);

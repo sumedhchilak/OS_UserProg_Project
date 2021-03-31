@@ -200,10 +200,6 @@ thread_create (const char *name, int priority,
   sf->eip = switch_entry;
   sf->ebp = 0;
 
-  // t->process = child;
-  // child->tid = tid;
-  // list_push_back(&thread_current()->list_child, &child->child_elem);
-
   /* Add to run queue. */
   thread_unblock (t);
 
