@@ -198,6 +198,13 @@ sys_exit (int status) {
   struct thread *curr = thread_current();
   curr->exit_status = status;
   printf ("%s: exit(%d)\n", thread_current ()->name, status);
+
+if(curr->exec_file != NULL){
+    sema_down(&sema_file);
+    file_close (curr->exec_file);
+    sema_up(&sema_file);
+  }
+
   sema_up(&curr->sema_wait);
   sema_down(&curr->sema_free);
 

@@ -151,15 +151,8 @@ process_exit (void)
   struct thread *cur = thread_current ();
   uint32_t *pd;
 
-
   sema_down (&sema_file);
   
-  int i = 2;
-  for(; i < 128; i++){
-    if(cur->file_d[i]){
-      file_close(cur->file_d[i]);
-    }
-  }
   /* file descriptor numbers 0 and 1 are reserved 
   for file standard input and output*/
   int index = 2;
@@ -289,6 +282,7 @@ load (const char *file_name, char *file_copy, void (**eip) (void), void **esp)
   struct file *file = NULL;
   off_t file_ofs;
   bool success = false;
+  int num = 0;
   int i;
   sema_down (&sema_file);
   int val = 0;
@@ -306,6 +300,7 @@ load (const char *file_name, char *file_copy, void (**eip) (void), void **esp)
       goto done; 
     }
   /* End Avi Driving */
+  num = 1;
 
   /* Read and verify exec_file header. */
   if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
@@ -432,6 +427,10 @@ load (const char *file_name, char *file_copy, void (**eip) (void), void **esp)
   success = true;
 
  done:
+  if(num){
+    thread_current ()->exec_file = file;
+    file_deny_write (file);
+  }
   if(!val){
     sema_up(&sema_file);
   }
@@ -534,8 +533,8 @@ create_page (int argc, int ttl_arg_size, const char * file_name, void * pg_ptr)
   
   int i = 0;
   for(; i < argc; i++){
-    int arg_size = strlen(argv[i]) + 1;
-    strlcpy(pg_ptr, argv[i], arg_size);
+    int arg_size = sizeof (char) * (strlen(argv[i]) + 1);
+    memcpy(pg_ptr, argv[i], arg_size);
     uint32_t start = (uint32_t)(PHYS_BASE - pg_size);
     if(start) {
       *argv_addr = start + ((uint32_t)pg_ptr) - ((uint32_t)pg_start_addr);
